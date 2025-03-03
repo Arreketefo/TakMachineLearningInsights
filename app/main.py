@@ -1,9 +1,6 @@
 import logging
 from fastapi import FastAPI, Depends, HTTPException, Security
-from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from .config import settings
 from .schemas import CoTEvent, CoTResponse
@@ -17,6 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Create FastAPI app
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
@@ -55,13 +53,9 @@ async def process_cot(
 ):
     """Process a CoT event and detect anomalies"""
     try:
-        # Process the CoT event
         logger.info(f"Processing CoT event: {event.event_id}")
-
-        # Extract features and detect anomalies
         result = ml_processor.process_event(event)
 
-        # Create enriched response
         response = CoTResponse(
             event_id=event.event_id,
             is_anomaly=result["is_anomaly"],

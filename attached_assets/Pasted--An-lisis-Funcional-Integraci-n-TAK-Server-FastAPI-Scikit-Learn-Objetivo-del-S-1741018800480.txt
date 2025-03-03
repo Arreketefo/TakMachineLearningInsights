@@ -1,0 +1,208 @@
+# ✅ Análisis Funcional: Integración TAK Server + FastAPI + Scikit-Learn
+
+---
+
+## 🎯 **Objetivo del Sistema**
+
+Diseñar un microservicio ágil que:
+
+- Reciba eventos CoT desde TAK Server.
+- Procese los datos geoespaciales en tiempo real o cuasi-real con modelos de Machine Learning de Scikit-Learn.
+- Detecte anomalías, patrones inusuales y clasifique eventos.
+- Devuelva CoT enriquecidos o alertas de amenaza de nuevo al TAK Server.
+
+---
+
+## 🔹 **Arquitectura General**
+
+plaintext
+
+CopiarEditar
+
+`[TAK Clients (ATAK/WinTAK)]           │      (envían CoT)           │      ▼ [TAK Server]      │  (Forward CoT via API, plugin o syslog)      ▼ [FastAPI Microservice]      │  ┌── Preprocesamiento  ├── Aplicación del modelo ML (Scikit-Learn)  └── Generación de alerta / CoT enriquecido      │ [TAK Server]      ▲  (Recibe alerta vía API o plugin)      ▲ [TAK Clients (ven la alerta)]`
+
+---
+
+## 🧩 **Componentes Funcionales**
+
+### 1️⃣ TAK Server:
+
+- Configuración para enviar CoT relevantes mediante:
+    - Llamadas HTTP POST a la API de FastAPI.
+    - O bien mediante un plugin que reenvíe CoT en tiempo real.
+- Debe permitir recibir CoT enriquecidos (alertas) de vuelta.
+
+---
+
+### 2️⃣ FastAPI (Microservicio principal):
+
+- Servicio RESTful que expone endpoints como:
+    - `POST /process_cot`: recibe CoT, procesa y devuelve respuesta.
+    - `GET /health`: chequeo de estado.
+    - (Opcional) `GET /metrics`: para monitoreo.
+
+#### Funciones clave:
+
+- **Recepción de CoT:** Parsing y validación del XML o JSON del CoT recibido.
+- **Preprocesamiento:** Extracción de características del CoT (por ejemplo, velocidad, rumbo, altitud, patrones históricos).
+- **Aplicación del modelo Scikit-Learn:** Llama al modelo entrenado y evalúa si el evento es normal o anómalo.
+- **Generación de respuesta:** Crea un CoT enriquecido con la alerta que se devuelve al TAK Server.
+
+---
+
+### 3️⃣ Scikit-Learn (Motor de Machine Learning):
+
+- Modelos típicos a usar:
+    - **Isolation Forest:** Detección de anomalías en rutas o posiciones.
+    - **DBSCAN:** Clustering de ubicaciones para identificar acumulaciones inusuales.
+    - **Random Forest:** Clasificación de eventos si tienes un dataset etiquetado.
+    - **KMeans:** Identificación de patrones comunes frente a excepcionales.
+
+#### Recomendaciones:
+
+- Entrenar modelos offline con datasets históricos.
+- Guardar modelos con `joblib` o `pickle`.
+- Cargar los modelos en FastAPI al iniciar y reentrenarlos periódicamente fuera del flujo.
+
+---
+
+### 4️⃣ Respuesta al TAK Server:
+
+- Una vez procesado el CoT:
+    - Si es anómalo, se genera un CoT tipo "alerta" (por ejemplo, tipo="a-f-G-U-C" con detalle del riesgo).
+    - Se envía mediante una llamada HTTP POST al endpoint del TAK Server, o mediante un plugin que los reinyecte.
+
+---
+
+## 🔐 **Requisitos de Seguridad**
+
+- Autenticación básica (API Key o JWT para proteger el servicio).
+- HTTPS obligatorio para toda comunicación.
+- Validación estricta de datos de entrada para prevenir inyecciones maliciosas.
+- Logs de auditoría de los eventos procesados.
+
+---
+
+## 📊 **Requisitos No Funcionales**
+
+|Requisito|Detalle|
+|---|---|
+|**Escalabilidad**|Puede escalar verticalmente (mayor CPU/RAM) o replicando instancias detrás de un balanceador (NGINX).|
+|**Disponibilidad**|Desplegar mínimo 2 instancias para redundancia si es crítico.|
+|**Latencia**|<500 ms por evento, idealmente <100 ms si el modelo es ligero.|
+|**Mantenibilidad**|Código limpio, modular y con tests automatizados.|
+
+---
+
+## ⚙️ **Ventajas**
+
+- Ligero, fácil de implementar y mantener.
+- Perfecto para entornos con tráfico moderado de CoT.
+- Bajo coste de infraestructura (puede funcionar en un VPS, Raspberry Pi potente o servidor básico).
+- Integración nativa con TAK Server vía APIs.
+- Facilita iteraciones rápidas y pruebas A/B de modelos.
+
+---
+
+## ⚠️ **Desventajas**
+
+- Limitado para cargas extremadamente altas o múltiples fuentes concurrentes.
+- Modelos de Scikit-Learn no son óptimos para secuencias temporales largas o complejas (para eso sería mejor PyTorch/TensorFlow).
+- No dispone de mecanismos internos de alta tolerancia a fallos (a diferencia de Kafka).
+
+---
+
+## 💡 **Recomendaciones Finales**
+
+- Perfecto como MVP o solución en producción para despliegues regionales o pequeños-medianos.
+- Usa **Docker** para contenerizar y facilitar despliegue y actualización.
+- Añade supervisión con Prometheus + Grafana para monitoreo de uso y latencia.
+- Si la carga crece mucho, considera migrar a una arquitectura con **Redis Streams** o RabbitMQ como buffer de entrada antes de escalar a algo tipo Kafka.
+- Realiza un benchmark de latencia y memoria con datos reales para ajustar recursos del servidor.
+### **1. Mantén la lógica de procesamiento separada**
+
+- Cuando desarrolles el servicio con **FastAPI**, evita mezclar la lógica de ML directamente con la API.
+- En su lugar, crea un **módulo independiente para el procesamiento** que pueda ejecutarse por separado.
+    - 🚀 Esto facilitará mover el código de procesamiento a **Spark MLlib** en el futuro.
+
+#### 📌 Ejemplo:
+
+En vez de esto:
+
+python
+
+CopiarEditar
+
+`@app.post("/process_cot") def process_cot(data: dict):     model = load("modelo.pkl")  # 🔴 MAL: cargar el modelo cada vez     result = model.predict(data["features"])     return {"prediction": result}`
+
+Haz esto:
+
+python
+
+CopiarEditar
+
+`from ml_model import process_data  @app.post("/process_cot") def process_cot(data: dict):     result = process_data(data["features"])  # ✅ MANTENEMOS SEPARADO     return {"prediction": result}`
+
+Así, en el futuro, **solo necesitas reemplazar `ml_model.py` con código de Spark MLlib** en lugar de cambiar toda la API.
+
+---
+
+### 🔹 **2. Usa Kafka como "buffer" en la transición**
+
+Cuando llegue el momento de escalar a **Kafka + Spark**, no tienes que eliminar FastAPI. Puedes hacer que:
+
+1. **FastAPI actúe como productor de eventos en Kafka** (en lugar de responder directamente a cada solicitud).
+2. Luego, Spark Streaming consume esos eventos y los procesa.
+
+**Migración por fases:**
+
+plaintext
+
+CopiarEditar
+
+`FASE 1: FastAPI procesa eventos y responde directamente al TAK Server. FASE 2: FastAPI envía CoT a Kafka en lugar de responder directamente. FASE 3: Spark Streaming reemplaza FastAPI como procesador principal. FASE 4: FastAPI solo sirve para API de consulta y monitoreo.`
+
+📌 **Ejemplo de transición en código:**
+
+- Antes (FastAPI maneja todo):
+
+python
+
+CopiarEditar
+
+`@app.post("/process_cot") def process_cot(data: dict):     result = process_data(data["features"])     return {"prediction": result}`
+
+- Durante la transición (FastAPI manda CoT a Kafka):
+
+python
+
+CopiarEditar
+
+`from kafka import KafkaProducer import json  producer = KafkaProducer(bootstrap_servers="kafka:9092")  @app.post("/process_cot") def process_cot(data: dict):     producer.send("input_cot_events", json.dumps(data).encode("utf-8"))     return {"status": "Sent to Kafka"}`
+
+- Después, Spark Streaming leerá de Kafka y procesará los datos, eliminando FastAPI del flujo.
+
+---
+
+### 🔹 **3. Reutiliza modelos entrenados**
+
+- Los modelos de **Scikit-Learn** se pueden convertir fácilmente para **MLlib en Spark**.
+- Spark acepta modelos en formatos **PMML** y **ONNX**, por lo que puedes guardar tu modelo Scikit-Learn y luego cargarlo en Spark.
+
+📌 **Ejemplo de conversión de modelo de Scikit-Learn a Spark MLlib:**
+
+python
+
+CopiarEditar
+
+`from sklearn2pmml import sklearn2pmml from sklearn.ensemble import RandomForestClassifier  # Guardar modelo entrenado de Scikit-Learn sklearn2pmml(rf_model, "modelo_rf.pmml")`
+
+Luego, en Spark:
+
+python
+
+CopiarEditar
+
+`from pyspark.ml.classification import RandomForestClassificationModel  # Cargar modelo PMML en Spark modelo_spark = RandomForestClassificationModel.load("modelo_rf.pmml")`
+
+🚀 **Esto permite que los modelos que entrenaste con Scikit-Learn sigan funcionando en Spark sin problemas.**
